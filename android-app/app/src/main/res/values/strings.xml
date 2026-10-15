@@ -1,0 +1,14 @@
+<resources>
+    <string name="app_name">Crack Detection</string>
+    <string name="title">CRACK DETECTION</string>
+    <string name="server_ip">Server IP</string>
+    <string name="ip_hint">192.168.1.10</string>
+    <string name="connect">CONNECT</string>
+    <string name="disconnect">Disconnect</string>
+    <string name="refresh">Refresh</string>
+    <string name="live_detection">LIVE DETECTION</string>
+    <string name="recent_detections">RECENT DETECTIONS</string>
+    <string name="server_stats">SERVER STATS</string>
+    <string name="online">ONLINE</string>
+    <string name="no_detections">No crack records have been received.</string>
+</resources>

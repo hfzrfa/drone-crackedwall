@@ -1,0 +1,15 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+*.log
+.git/
+.gitignore
+datasets/
+video/
+static/images/
+logs/
+android-app/
+install*.log
+model-test*.log
+server*.log

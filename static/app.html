@@ -1,0 +1,497 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Monitor Retakan</title>
+    <style>
+      :root {
+        --canvas: #f3f8f7;
+        --surface: #fff;
+        --ink: #13231f;
+        --muted: #667670;
+        --line: #d8e5df;
+        --accent: #087d63;
+        --accent-soft: #e1f4ec;
+        --danger: #b74635;
+        --code: #eff5f2;
+        --shadow: 0 18px 48px -34px rgba(14, 62, 49, 0.35);
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        min-width: 320px;
+        margin: 0;
+        background: var(--canvas);
+        color: var(--ink);
+        font-family: Outfit, "Segoe UI", Arial, sans-serif;
+      }
+      .shell {
+        max-width: 1480px;
+        margin: 0 auto;
+        min-height: 100dvh;
+        padding: 28px;
+      }
+      .topbar {
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 24px;
+        padding: 0 0 24px;
+        border-bottom: 1px solid var(--line);
+      }
+      .eyebrow {
+        margin: 0 0 7px;
+        color: var(--accent);
+        font-size: 0.72rem;
+        font-weight: 750;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }
+      h1 {
+        margin: 0;
+        font-size: clamp(1.65rem, 3.5vw, 2.45rem);
+        letter-spacing: -0.055em;
+        line-height: 1;
+      }
+      .top-meta {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        color: var(--muted);
+        font-size: 0.85rem;
+      }
+      .signal {
+        width: 10px;
+        height: 10px;
+        border-radius: 999px;
+        background: #b9c9c3;
+        transition: background 0.25s ease;
+      }
+      .signal.live {
+        background: var(--accent);
+        box-shadow: 0 0 0 5px var(--accent-soft);
+      }
+      .signal.failed {
+        background: var(--danger);
+      }
+      .layout {
+        display: grid;
+        grid-template-columns: minmax(0, 1.7fr) minmax(310px, 0.85fr);
+        gap: 24px;
+        padding-top: 24px;
+      }
+      .video-zone,
+      .json-zone {
+        min-width: 0;
+      }
+      .section-title {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 16px;
+        margin-bottom: 10px;
+      }
+      h2 {
+        margin: 0;
+        font-size: 0.84rem;
+        font-weight: 750;
+        letter-spacing: 0.09em;
+        text-transform: uppercase;
+      }
+      .caption {
+        color: var(--muted);
+        font-family: "JetBrains Mono", Consolas, monospace;
+        font-size: 0.74rem;
+      }
+      .video-frame {
+        position: relative;
+        overflow: hidden;
+        min-height: 360px;
+        border: 1px solid #c9dbd3;
+        border-radius: 18px;
+        background: #17352e;
+        box-shadow: var(--shadow);
+      }
+      .video-frame::before {
+        content: "LIVE";
+        position: absolute;
+        z-index: 1;
+        top: 14px;
+        left: 14px;
+        padding: 5px 8px;
+        border-radius: 5px;
+        background: rgba(255, 255, 255, 0.9);
+        color: #185d4d;
+        font:
+          700 0.67rem/1 "JetBrains Mono",
+          Consolas,
+          monospace;
+        letter-spacing: 0.11em;
+      }
+      #stream {
+        display: block;
+        width: 100%;
+        min-height: 360px;
+        max-height: calc(100dvh - 170px);
+        object-fit: contain;
+        background: #17352e;
+      }
+      .stream-note {
+        position: absolute;
+        inset: auto 14px 14px;
+        max-width: calc(100% - 28px);
+        padding: 8px 10px;
+        background: rgba(18, 35, 31, 0.78);
+        color: #e8f3ef;
+        border-radius: 6px;
+        font-size: 0.77rem;
+        opacity: 0;
+        transform: translateY(5px);
+        transition: 0.25s ease;
+      }
+      .stream-note.show {
+        opacity: 1;
+        transform: translateY(0);
+      }
+      .json-zone {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+      .log-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 10px;
+      }
+      .action {
+        appearance: none;
+        padding: 7px 10px;
+        border: 1px solid #b9d8cd;
+        border-radius: 7px;
+        background: var(--surface);
+        color: #176652;
+        font:
+          700 0.72rem/1 Outfit,
+          "Segoe UI",
+          sans-serif;
+        cursor: pointer;
+        transition:
+          transform 0.15s ease,
+          background 0.15s ease;
+      }
+      .action:hover {
+        background: var(--accent-soft);
+      }
+      .action:active {
+        transform: scale(0.98);
+      }
+      .log-panel {
+        min-height: 300px;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        background: var(--surface);
+        box-shadow: var(--shadow);
+      }
+      .log-head {
+        display: flex;
+        gap: 7px;
+        align-items: center;
+        padding: 13px 15px;
+        border-bottom: 1px solid var(--line);
+        color: var(--muted);
+        font:
+          600 0.68rem/1 "JetBrains Mono",
+          Consolas,
+          monospace;
+      }
+      .dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: #c4d2cc;
+      }
+      .dot:first-child {
+        background: #65bda4;
+      }
+      #logs {
+        height: min(38dvh, 420px);
+        margin: 0;
+        padding: 16px;
+        overflow: auto;
+        background: var(--code);
+        color: #26443a;
+        font:
+          0.77rem/1.62 "JetBrains Mono",
+          Consolas,
+          monospace;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .summary {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 1px;
+        margin-top: 20px;
+        border: 1px solid var(--line);
+        background: var(--line);
+      }
+      .metric {
+        padding: 14px;
+        background: var(--surface);
+      }
+      .metric strong {
+        display: block;
+        margin-top: 5px;
+        font:
+          750 1.05rem/1 "JetBrains Mono",
+          Consolas,
+          monospace;
+      }
+      .metric span {
+        color: var(--muted);
+        font-size: 0.7rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+      .right-section { min-width: 0; }
+      .toolbar-actions { display: flex; gap: 8px; }
+      .recent-list {
+        display: grid;
+        gap: 10px;
+        max-height: 310px;
+        overflow: auto;
+      }
+      .detection-card,
+      .empty-state {
+        display: grid;
+        grid-template-columns: 82px minmax(0, 1fr);
+        gap: 12px;
+        align-items: center;
+        padding: 10px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: var(--surface);
+      }
+      .detection-card img {
+        width: 82px;
+        height: 62px;
+        border-radius: 8px;
+        object-fit: cover;
+        background: var(--code);
+      }
+      .detection-card strong,
+      .detection-card span { display: block; }
+      .detection-card strong { margin-bottom: 4px; }
+      .detection-card span,
+      .empty-state { color: var(--muted); font-size: 0.77rem; }
+      .empty-state { display: block; }
+      @media (max-width: 850px) {
+        .shell {
+          padding: 18px;
+        }
+        .topbar {
+          align-items: flex-start;
+          flex-direction: column;
+          gap: 14px;
+        }
+        .layout {
+          grid-template-columns: 1fr;
+          gap: 28px;
+        }
+        .video-frame,
+        #stream {
+          min-height: 230px;
+        }
+        #stream {
+          max-height: none;
+        }
+        .log-panel {
+          min-height: 340px;
+        }
+        #logs {
+          height: 340px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Drone Crack Detection</p>
+          <h1>Monitor inspeksi permukaan</h1>
+        </div>
+        <div class="top-meta">
+          <span class="signal" id="signal"></span
+          ><span id="connection">Menyambungkan ke server</span>
+        </div>
+      </header>
+      <section class="layout" aria-label="Monitoring deteksi retakan">
+        <article class="video-zone">
+          <div class="section-title">
+            <h2>Video Deteksi</h2>
+            <span class="caption" id="source-label">memuat sumber</span>
+          </div>
+          <div class="video-frame">
+            <img
+              id="stream"
+              src="/video"
+              alt="Stream video dengan area retakan terdeteksi"
+            /><span class="stream-note" id="stream-note"
+              >Stream sedang disambungkan.</span
+            >
+          </div>
+          <div class="summary" aria-label="Ringkasan proses">
+            <div class="metric">
+              <span>Frame diproses</span><strong id="frames">-</strong>
+            </div>
+            <div class="metric">
+              <span>Deteksi</span><strong id="detections">-</strong>
+            </div>
+            <div class="metric">
+              <span>Bukti disimpan</span><strong id="saved">-</strong>
+            </div>
+            <div class="metric">
+              <span>Duplikat dilewati</span><strong id="duplicate-skips">-</strong>
+            </div>
+            <div class="metric">
+              <span>FPS proses</span><strong id="processing-fps">-</strong>
+            </div>
+            <div class="metric">
+              <span>Database</span><strong id="database-state">-</strong>
+            </div>
+          </div>
+        </article>
+        <aside class="json-zone">
+          <section class="right-section">
+            <div class="log-toolbar">
+              <h2>Deteksi terbaru</h2>
+              <span class="caption" id="detection-count">0 record</span>
+            </div>
+            <div class="recent-list" id="recent-list">
+              <div class="empty-state">Belum ada bukti deteksi.</div>
+            </div>
+          </section>
+          <section class="right-section">
+            <div class="log-toolbar">
+              <h2>Log JSON</h2>
+              <div class="toolbar-actions">
+                <button class="action" type="button" id="reconnect">Reconnect</button>
+                <button class="action" type="button" id="refresh">Muat ulang</button>
+              </div>
+            </div>
+            <div class="log-panel">
+              <div class="log-head">
+                <i class="dot"></i><i class="dot"></i><i class="dot"></i
+                ><span>API /health + /stats + /documents</span>
+              </div>
+              <pre id="logs">Mengambil status server...</pre>
+            </div>
+          </section>
+        </aside>
+      </section>
+    </main>
+    <script>
+      const signal = document.querySelector("#signal"),
+        connection = document.querySelector("#connection"),
+        logs = document.querySelector("#logs"),
+        note = document.querySelector("#stream-note"),
+        stream = document.querySelector("#stream");
+      const fields = ["frames", "detections", "saved"];
+      function setConnection(text, state = "live") {
+        connection.textContent = text;
+        signal.className = `signal ${state}`;
+      }
+      function renderDetections(documents) {
+        const list = document.querySelector("#recent-list");
+        list.replaceChildren();
+        document.querySelector("#detection-count").textContent =
+          `${documents.length} record`;
+        if (!documents.length) {
+          const empty = document.createElement("div");
+          empty.className = "empty-state";
+          empty.textContent = "Belum ada bukti deteksi pada sesi ini.";
+          list.append(empty);
+          return;
+        }
+        documents.slice(0, 6).forEach((record) => {
+          const data = record.data || {};
+          const card = document.createElement("article");
+          card.className = "detection-card";
+          const image = document.createElement("img");
+          image.loading = "lazy";
+          image.alt = `Bukti ${data.label || "retakan"}`;
+          image.src = data.image_url || `/static/images/${data.image_name || ""}`;
+          image.addEventListener("error", () => (image.style.visibility = "hidden"));
+          const detail = document.createElement("div");
+          const title = document.createElement("strong");
+          title.textContent = data.label || "Retakan";
+          const confidence = document.createElement("span");
+          confidence.textContent = `Confidence: ${Math.round((Number(data.confidence) || 0) * 100)}%`;
+          const timestamp = document.createElement("span");
+          const date = data.timestamp ? new Date(data.timestamp) : null;
+          timestamp.textContent = date && !Number.isNaN(date.valueOf())
+            ? date.toLocaleString("id-ID")
+            : "Waktu tidak tersedia";
+          detail.append(title, confidence, timestamp);
+          card.append(image, detail);
+          list.append(card);
+        });
+      }
+      async function refresh() {
+        try {
+          const [healthResponse, statsResponse, documentsResponse] = await Promise.all([
+            fetch("/health"),
+            fetch("/stats"),
+            fetch("/documents?limit=20"),
+          ]);
+          const health = await healthResponse.json(),
+            stats = await statsResponse.json(),
+            documents = await documentsResponse.json();
+          fields.forEach(
+            (key) =>
+              (document.querySelector(`#${key}`).textContent =
+                stats[key] ?? health[key] ?? "-"),
+          );
+          document.querySelector("#source-label").textContent =
+            health.source_status || "sumber belum aktif";
+          document.querySelector("#duplicate-skips").textContent =
+            stats.detections_skipped_duplicate ?? "-";
+          document.querySelector("#processing-fps").textContent =
+            stats.processing_fps ?? "-";
+          document.querySelector("#database-state").textContent =
+            health.database_status || "-";
+          renderDetections(Array.isArray(documents) ? documents : []);
+          logs.textContent = JSON.stringify({ health, stats, documents }, null, 2);
+          setConnection(
+            health.ok
+              ? "Server terhubung"
+              : "Server siap, model belum tersedia",
+            health.ok ? "live" : "failed",
+          );
+        } catch (error) {
+          logs.textContent = JSON.stringify(
+            { error: "Gagal menghubungi server", detail: error.message },
+            null,
+            2,
+          );
+          setConnection("Server tidak dapat dihubungi", "failed");
+        }
+      }
+      stream.addEventListener("load", () => note.classList.remove("show"));
+      stream.addEventListener("error", () => note.classList.add("show"));
+      document.querySelector("#refresh").addEventListener("click", refresh);
+      document.querySelector("#reconnect").addEventListener("click", () => {
+        note.classList.add("show");
+        stream.src = `/video?reconnect=${Date.now()}`;
+        refresh();
+      });
+      refresh();
+      setInterval(refresh, 5000);
+    </script>
+  </body>
+</html>

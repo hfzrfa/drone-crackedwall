@@ -1,0 +1,25 @@
+# Local configuration and Python environment
+.env
+.venv/
+__pycache__/
+*.py[cod]
+
+# Runtime output
+*.log
+static/images/
+logs/
+
+# Large local test/training files
+video/*
+datasets/
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.vscode/
+
+# Android local/build output
+android-app/.gradle/
+android-app/local.properties
+android-app/**/build/
+android-app/.idea/
