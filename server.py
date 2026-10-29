@@ -4,6 +4,7 @@ from __future__ import annotations
 import _thread
 import atexit
 import csv
+import json
 import logging
 import os
 import re
@@ -24,12 +25,86 @@ from dotenv import load_dotenv
 from flask import Flask, Response, jsonify, request
 from werkzeug.exceptions import HTTPException
 
+from attribution import decode_attribution
+
 ROOT = Path(__file__).resolve().parent
 load_dotenv(ROOT / ".env")
 IMAGE_DIR = ROOT / "static" / "images"
 LOG_DIR = ROOT / "logs"
+COPY_ID_FILE = ROOT / "distribution" / "copy_id.json"
 IMAGE_DIR.mkdir(parents=True, exist_ok=True)
 LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _load_copy_id(path: Path = COPY_ID_FILE) -> str:
+    """Load the package ID without ever generating a replacement at startup."""
+    try:
+        value = str(json.loads(path.read_text(encoding="utf-8"))["copy_id"])
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return "copy-unassigned"
+    return value if re.fullmatch(r"copy-[0-9a-f]{32}", value) else "copy-unassigned"
+
+
+COPY_ID = _load_copy_id()
+
+
+def _watermark_strip_height(content_height: int) -> int:
+    return max(32, min(64, round(content_height * 0.075)))
+
+
+def _has_watermark_marker(image: np.ndarray, content_height: int, strip_height: int) -> bool:
+    """Recognize the small alternating marker stored inside our evidence strip."""
+    height, width = image.shape[:2]
+    if height != content_height + strip_height or width < 64:
+        return False
+    block = 4
+    marker_height = 2
+    start_x = width - (8 * block) - 8
+    expected_bright = [index % 2 == 0 for index in range(8)]
+    for y, sample_height in ((height - marker_height - 1, marker_height), (content_height + 4, block)):
+        if y < content_height or y + sample_height > height:
+            continue
+        observed = [float(image[y:y + sample_height, start_x + i * block:start_x + (i + 1) * block].mean()) for i in range(8)]
+        if all((value > 125) == bright for value, bright in zip(observed, expected_bright)):
+            return True
+    return False
+
+
+def _watermarked_content_height(image: np.ndarray) -> int | None:
+    total_height = image.shape[0]
+    for strip_height in range(32, 65):
+        content_height = total_height - strip_height
+        if content_height > 0 and _watermark_strip_height(content_height) == strip_height:
+            if _has_watermark_marker(image, content_height, strip_height):
+                return content_height
+    return None
+
+
+def add_evidence_watermark(image: np.ndarray) -> tuple[np.ndarray, int]:
+    """Return a watermarked copy and original content height; never alter inference input."""
+    if image.ndim != 3 or image.shape[2] != 3:
+        raise ValueError("evidence image must be a BGR color image")
+    existing_height = _watermarked_content_height(image)
+    if existing_height is not None:
+        return image, existing_height
+    content_height, width = image.shape[:2]
+    strip_height = _watermark_strip_height(content_height)
+    output = np.full((content_height + strip_height, width, 3), (35, 32, 29), dtype=np.uint8)
+    output[:content_height] = image
+    label = decode_attribution("short")
+    scale = max(0.42, min(0.72, strip_height / 58.0))
+    thickness = 1 if strip_height < 52 else 2
+    text_size, baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, scale, thickness)
+    text_y = content_height + max(text_size[1] + 5, (strip_height + text_size[1] - baseline) // 2)
+    cv2.putText(output, label, (12, min(text_y, output.shape[0] - 7)), cv2.FONT_HERSHEY_SIMPLEX, scale, (232, 236, 238), thickness, cv2.LINE_AA)
+    block = 4
+    marker_height = 2
+    start_x = width - (8 * block) - 8
+    if start_x >= 0:
+        for index in range(8):
+            shade = 225 if index % 2 == 0 else 30
+            output[-marker_height - 1:-1, start_x + index * block:start_x + (index + 1) * block] = shade
+    return output, content_height
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -339,7 +414,8 @@ class CrackDetectionService:
         best = max(detections, key=lambda item: float(item["confidence"]))
         stamp = datetime.now(timezone.utc)
         filename = f"{int(stamp.timestamp() * 1000)}_{self._safe_label(str(best['label']))}_{uuid.uuid4().hex[:6]}.jpg"
-        if not cv2.imwrite(str(IMAGE_DIR / filename), frame):
+        evidence, content_height = add_evidence_watermark(frame)
+        if not cv2.imwrite(str(IMAGE_DIR / filename), evidence):
             self._set_error(f"Evidence image could not be written: {filename}")
             logger.error("EVIDENCE WRITE FAILED | %s", filename)
             return
@@ -348,6 +424,10 @@ class CrackDetectionService:
             "image_name": filename,
             "image_url": f"{self.base_url}/static/images/{filename}",
             "source": self.config.source_type,
+            "copy_id": COPY_ID,
+            "image_content_width": int(frame.shape[1]),
+            "image_content_height": int(content_height),
+            "watermark_strip_height": int(evidence.shape[0] - content_height),
         }
         document: dict[str, Any] = {"_id": uuid.uuid4().hex, "data": data}
         if self.collection is not None:
@@ -486,6 +566,7 @@ class CrackDetectionService:
                 "last_error": self.last_error,
                 "frames": self.stats["frames_processed"], "detections": self.stats["detections_seen"],
                 "saved": self.stats["detections_saved"],
+                "copy_id": COPY_ID,
             }
 
     def stats_payload(self) -> dict[str, Any]:
@@ -497,6 +578,7 @@ class CrackDetectionService:
                 "saved": self.stats["detections_saved"], "memory_documents": len(self.memory_documents),
                 "database_status": self.database_status, "source_status": self.source_status,
                 "last_error": self.last_error,
+                "copy_id": COPY_ID,
             })
             return snapshot
 
@@ -542,19 +624,20 @@ class CrackDetectionService:
             stats = dict(self.stats)
         try:
             with path.open("w", newline="", encoding="utf-8-sig") as handle:
-                fields = ["record_type", "timestamp", "label", "confidence", "image_name", "source", "metric", "value"]
+                fields = ["record_type", "timestamp", "label", "confidence", "image_name", "source", "copy_id", "metric", "value"]
                 writer = csv.DictWriter(handle, fieldnames=fields)
                 writer.writeheader()
                 for item in records:
-                    writer.writerow({"record_type": "detection", "timestamp": item.get("timestamp", ""), "label": item.get("label", ""), "confidence": item.get("confidence", ""), "image_name": item.get("image_name", ""), "source": item.get("source", "")})
+                    writer.writerow({"record_type": "detection", "timestamp": item.get("timestamp", ""), "label": item.get("label", ""), "confidence": item.get("confidence", ""), "image_name": item.get("image_name", ""), "source": item.get("source", ""), "copy_id": item.get("copy_id", COPY_ID)})
                 summary = {
                     "start_time": self.started_at.isoformat(), "end_time": end_time.isoformat(),
                     "frames_read": stats["frames_read"], "frames_processed": stats["frames_processed"],
                     "detections_seen": stats["detections_seen"], "detections_saved": stats["detections_saved"],
                     "duplicate_skips": stats["detections_skipped_duplicate"], "database_errors": stats["database_errors"],
+                    "copy_id": COPY_ID,
                 }
                 for key, value in summary.items():
-                    writer.writerow({"record_type": "summary", "metric": key, "value": value})
+                    writer.writerow({"record_type": "summary", "copy_id": COPY_ID, "metric": key, "value": value})
             logger.info("SESSION CSV WRITTEN | %s", path)
             return path
         except Exception as exc:
@@ -590,7 +673,7 @@ app.config["JSON_SORT_KEYS"] = False
 
 @app.get("/")
 def index() -> Response:
-    return jsonify({"service": "YOLO Crack Detection API", "dashboard": "/static/app.html", "video": "/video", "documents": "/documents?limit=20", "health": "/health", "stats": "/stats"})
+    return jsonify({"service": "YOLO Crack Detection API", "copy_id": COPY_ID, "dashboard": "/static/app.html", "video": "/video", "documents": "/documents?limit=20", "health": "/health", "stats": "/stats"})
 
 
 @app.get("/health")

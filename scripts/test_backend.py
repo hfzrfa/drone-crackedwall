@@ -42,13 +42,14 @@ def main() -> int:
     stream_one.close()
     check("evidence directory is writable", server.IMAGE_DIR.exists() and server.IMAGE_DIR.is_dir())
     original_records = list(server.service.session_records)
-    server.service.session_records = [{"timestamp": "2026-10-15T00:00:00+00:00", "label": "test", "confidence": 1.0, "image_name": "test.jpg", "source": "video_file"}]
+    server.service.session_records = [{"timestamp": "2026-10-15T00:00:00+00:00", "label": "test", "confidence": 1.0, "image_name": "test.jpg", "source": "video_file", "copy_id": server.COPY_ID}]
     csv_path = server.service.write_session_csv()
     check("session CSV generated", csv_path is not None and csv_path.is_file())
     if csv_path is not None:
         with csv_path.open(encoding="utf-8-sig") as handle:
             rows = list(csv.DictReader(handle))
         check("session CSV contains detection and summary", any(r["record_type"] == "detection" for r in rows) and any(r["record_type"] == "summary" for r in rows))
+        check("session CSV contains copy ID", all(r["copy_id"] == server.COPY_ID for r in rows))
     server.service.session_records = original_records
     print("PASS | local-memory mode active" if server.service.collection is None else "PASS | MongoDB mode active")
     return 0

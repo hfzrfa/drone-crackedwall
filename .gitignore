@@ -8,6 +8,8 @@ __pycache__/
 *.log
 static/images/
 logs/
+distribution/*.sha256
+distribution/*.zip
 
 # Large local test/training files
 video/*
