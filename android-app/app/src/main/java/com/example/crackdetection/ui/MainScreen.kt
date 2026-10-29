@@ -21,6 +21,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -30,12 +31,17 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -45,6 +51,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.example.crackdetection.R
+import com.example.crackdetection.attribution.Attribution
 import com.example.crackdetection.model.Detection
 import com.example.crackdetection.model.StatsResponse
 import com.example.crackdetection.viewmodel.MainUiState
@@ -57,12 +64,14 @@ import java.util.Locale
 @Composable
 fun MainScreen(viewModel: MainViewModel = viewModel()) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    var showAbout by remember { mutableStateOf(false) }
     Scaffold(modifier = Modifier.fillMaxSize()) { padding ->
         if (state.connected) {
             ConnectedContent(
                 state = state,
                 onRefresh = { viewModel.refresh() },
                 onDisconnect = viewModel::disconnect,
+                onAbout = { showAbout = true },
                 modifier = Modifier.padding(padding),
             )
         } else {
@@ -70,9 +79,13 @@ fun MainScreen(viewModel: MainViewModel = viewModel()) {
                 state = state,
                 onIpChange = viewModel::setServerIp,
                 onConnect = viewModel::connect,
+                onAbout = { showAbout = true },
                 modifier = Modifier.padding(padding),
             )
         }
+    }
+    if (showAbout) {
+        AboutDialog(onDismiss = { showAbout = false })
     }
 }
 
@@ -81,6 +94,7 @@ private fun ConnectContent(
     state: MainUiState,
     onIpChange: (String) -> Unit,
     onConnect: () -> Unit,
+    onAbout: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -113,6 +127,7 @@ private fun ConnectContent(
                 Text(stringResource(R.string.connect))
             }
         }
+        TextButton(onClick = onAbout, modifier = Modifier.align(Alignment.CenterHorizontally)) { Text("About") }
     }
 }
 
@@ -121,6 +136,7 @@ private fun ConnectedContent(
     state: MainUiState,
     onRefresh: () -> Unit,
     onDisconnect: () -> Unit,
+    onAbout: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     LazyColumn(
@@ -146,9 +162,12 @@ private fun ConnectedContent(
         item { SectionTitle(stringResource(R.string.live_detection)) }
         item { MjpegView(state.baseUrl) }
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = onRefresh, enabled = !state.loading) { Text(stringResource(R.string.refresh)) }
-                OutlinedButton(onClick = onDisconnect) { Text(stringResource(R.string.disconnect)) }
+            Column(horizontalAlignment = Alignment.Start) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = onRefresh, enabled = !state.loading) { Text(stringResource(R.string.refresh)) }
+                    OutlinedButton(onClick = onDisconnect) { Text(stringResource(R.string.disconnect)) }
+                }
+                TextButton(onClick = onAbout) { Text("About") }
             }
         }
         item { SectionTitle(stringResource(R.string.recent_detections)) }
@@ -163,6 +182,27 @@ private fun ConnectedContent(
         item { StatsCard(state.stats, state.health?.databaseStatus.orEmpty()) }
         item { Spacer(Modifier.height(24.dp)) }
     }
+}
+
+@Composable
+private fun AboutDialog(onDismiss: () -> Unit) {
+    val uriHandler = LocalUriHandler.current
+    val repository = remember { Attribution.repository() }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("About") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(remember { Attribution.full() }, style = MaterialTheme.typography.bodyMedium)
+                Text("Repository asal", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(repository, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { uriHandler.openUri(repository) }) { Text("Buka repository") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Tutup") } },
+    )
 }
 
 @Composable

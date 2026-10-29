@@ -289,6 +289,15 @@
       .detection-card span,
       .empty-state { color: var(--muted); font-size: 0.77rem; }
       .empty-state { display: block; }
+      .app-footer {
+        margin-top: 24px;
+        padding-top: 16px;
+        border-top: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 0.75rem;
+        line-height: 1.4;
+        text-align: center;
+      }
       @media (max-width: 850px) {
         .shell {
           padding: 18px;
@@ -394,8 +403,20 @@
           </section>
         </aside>
       </section>
+      <footer class="app-footer" id="developer-mark" aria-label="Atribusi pengembang"></footer>
     </main>
     <script>
+      function revealLabel(masked, seed) {
+        const bytes = masked.map(
+          (value, index) => value ^ ((seed + index * 73) & 255) ^ ((index * index * 17) & 255),
+        );
+        return new TextDecoder().decode(new Uint8Array(bytes));
+      }
+      const developerMark = revealLabel(
+        [31, 208, 223, 202, 3, 14, 5, 126, 135, 173, 243, 14, 119, 65, 59, 41, 153, 99, 152],
+        91,
+      );
+      document.querySelector("#developer-mark").textContent = developerMark;
       const signal = document.querySelector("#signal"),
         connection = document.querySelector("#connection"),
         logs = document.querySelector("#logs"),

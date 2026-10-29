@@ -2,6 +2,8 @@
 
 A local end-to-end crack detection prototype that processes a video file, webcam, OBS Virtual Camera, or DJI FPV video relayed through OBS. A Flask server runs the existing `best.pt` YOLO segmentation model once, shares annotated MJPEG frames with browser/Android clients, stores evidence images, and writes records to MongoDB Atlas or an in-memory fallback.
 
+Developed by hfzrfa. Original repository: <https://github.com/hfzrfa/drone-crackedwall>. See [ATTRIBUTION.md](ATTRIBUTION.md) for the honest limits of runtime label obfuscation, recipient copy IDs, and distribution integrity manifests.
+
 `best.pt` is preserved for inference. This project does not retrain, replace, or modify its weights. The raw files in `datasets/` are future training material and are not used by the application.
 
 ## System architecture
@@ -29,6 +31,9 @@ Deteksi-Retakan-Drone/
 |-- server.py                   Flask API, single YOLO worker, persistence
 |-- best.pt                     Existing crack segmentation model
 |-- requirements.txt            Python dependencies
+|-- attribution.py              Small reversible runtime-label decoder
+|-- ATTRIBUTION.md              Attribution and distribution provenance guide
+|-- distribution/copy_id.json   Persistent non-personal package copy ID
 |-- .env.example                Safe configuration template
 |-- run.ps1                     First installation and server start
 |-- start.ps1                   Start an installed project
@@ -48,6 +53,9 @@ Deteksi-Retakan-Drone/
 |   |-- test_mongo.py
 |   |-- test_api.py
 |   |-- test_backend.py
+|   |-- test_attribution.py
+|   |-- generate_copy_id.py
+|   |-- generate_distribution_manifest.py
 |   |-- setup_firewall.ps1
 |   `-- repack_model.py
 `-- android-app/                Native Kotlin/Jetpack Compose client
@@ -257,6 +265,10 @@ Detection records retain this compatible shape:
     "image_name": "1791880215123_retakan_ab12cd.jpg",
     "image_url": "http://192.168.1.10:5000/static/images/...jpg",
     "source": "video_file",
+    "copy_id": "copy-0123456789abcdef0123456789abcdef",
+    "image_content_width": 1280,
+    "image_content_height": 720,
+    "watermark_strip_height": 54,
     "polygon": [[120.2, 88.1], [121.7, 91.4]]
   }
 }
@@ -273,6 +285,14 @@ Run in-process backend/model/video/CSV checks:
 ```powershell
 .\.venv\Scripts\python.exe .\scripts\test_backend.py
 ```
+
+Run attribution decoder, plaintext-source, evidence-strip, duplicate-watermark, coordinate, and copy-ID checks without starting a camera worker:
+
+```powershell
+.\.venv\Scripts\python.exe .\scripts\test_attribution.py
+```
+
+Evidence watermarking occurs only after inference and annotation. The saved JPEG receives an extra strip below the original image; polygons and `image_content_*` continue to refer to the unextended inference area. Reprocessing detects the strip marker and avoids adding it twice. The live MJPEG frame, model weights, confidence, polygons, and metrics are unchanged.
 
 ## Server lifecycle and logging
 
