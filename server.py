@@ -529,7 +529,7 @@ class CrackDetectionService:
         cap = cv2.VideoCapture(str(path))
         if not cap.isOpened():
             with self.jobs_lock:
-                job["status"], job["error"] = "failed", "video tidak dapat dibuka"
+                job["status"], job["error"] = "failed", "video could not be opened"
             return
         total = max(0, int(cap.get(cv2.CAP_PROP_FRAME_COUNT)))
         source_fps = max(1.0, float(cap.get(cv2.CAP_PROP_FPS) or 0.0))
@@ -557,7 +557,7 @@ class CrackDetectionService:
         except Exception as exc:
             logger.error("UPLOAD JOB FAILED | id=%s error=%s", job_id, _safe_error(exc))
             with self.jobs_lock:
-                job["status"], job["error"] = "failed", "pemrosesan video gagal"
+                job["status"], job["error"] = "failed", "video processing failed"
         finally:
             cap.release()
 
@@ -845,7 +845,7 @@ def security_headers(response: Response) -> Response:
 def login() -> Response:
     if _is_authenticated():
         return redirect(url_for("index"))
-    return Response("""<!doctype html><html lang=\"id\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Masuk | Crack Detection</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f3f8f7;font:16px system-ui;color:#13231f}form{width:min(360px,calc(100% - 40px));padding:28px;background:#fff;border:1px solid #d8e5df;border-radius:16px;box-shadow:0 18px 48px -34px #123}label,input,button{display:block;width:100%;box-sizing:border-box}label{margin-top:16px;font-weight:650}input{margin-top:6px;padding:11px;border:1px solid #b8cac1;border-radius:8px}button{margin-top:24px;padding:12px;border:0;border-radius:8px;background:#087d63;color:#fff;font-weight:700;cursor:pointer}.error{color:#b74635}</style><form method=\"post\" action=\"login\"><h1>Crack Detection</h1><p>Masuk untuk membuka dashboard.</p>{error}<label>Username<input name=\"username\" autocomplete=\"username\" required></label><label>Password<input type=\"password\" name=\"password\" autocomplete=\"current-password\" required></label><button>Masuk</button></form></html>""".replace("{error}", "<p class=\"error\">Kredensial belum dikonfigurasi.</p>" if not (CONFIG.admin_password or CONFIG.admin_password_hash) else ""), mimetype="text/html")
+    return Response("""<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Sign in | Crack Detection</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f3f8f7;font:16px system-ui;color:#13231f}form{width:min(360px,calc(100% - 40px));padding:28px;background:#fff;border:1px solid #d8e5df;border-radius:16px;box-shadow:0 18px 48px -34px #123}label,input,button{display:block;width:100%;box-sizing:border-box}label{margin-top:16px;font-weight:650}input{margin-top:6px;padding:11px;border:1px solid #b8cac1;border-radius:8px}button{margin-top:24px;padding:12px;border:0;border-radius:8px;background:#087d63;color:#fff;font-weight:700;cursor:pointer}.error{color:#b74635}</style><form method=\"post\" action=\"login\"><h1>Crack Detection</h1><p>Sign in to open the dashboard.</p>{error}<label>Username<input name=\"username\" autocomplete=\"username\" required></label><label>Password<input type=\"password\" name=\"password\" autocomplete=\"current-password\" required></label><button>Sign in</button></form></html>""".replace("{error}", "<p class=\"error\">Credentials have not been configured.</p>" if not (CONFIG.admin_password or CONFIG.admin_password_hash) else ""), mimetype="text/html")
 
 
 @app.post("/login")
@@ -854,11 +854,11 @@ def login_submit() -> Response:
     password = str(request.form.get("password", ""))
     remote_address = request.remote_addr or "unknown"
     if _login_is_rate_limited(remote_address):
-        return Response("Terlalu banyak percobaan login. Coba lagi dalam sepuluh menit.", status=429, mimetype="text/plain")
+        return Response("Too many login attempts. Try again in ten minutes.", status=429, mimetype="text/plain")
     if username != CONFIG.admin_username or not _password_matches(password):
         _record_failed_login(remote_address)
         time.sleep(0.5)
-        return Response("Kredensial tidak valid.", status=401, mimetype="text/plain")
+        return Response("Invalid credentials.", status=401, mimetype="text/plain")
     _clear_failed_logins(remote_address)
     session.clear()
     session["authenticated"] = True
@@ -927,10 +927,10 @@ def stats() -> Response:
 def upload_video() -> Response | tuple[Response, int]:
     uploaded = request.files.get("video")
     if uploaded is None or not uploaded.filename:
-        return jsonify({"error": "file video wajib diisi"}), 400
+        return jsonify({"error": "a video file is required"}), 400
     extension = Path(secure_filename(uploaded.filename)).suffix.lower()
     if extension not in {".mp4", ".mov", ".avi", ".mkv", ".webm"}:
-        return jsonify({"error": "format video tidak didukung"}), 400
+        return jsonify({"error": "unsupported video format"}), 400
     stored_name = f"{uuid.uuid4().hex}{extension}"
     destination = UPLOAD_DIR / stored_name
     uploaded.save(destination)
@@ -941,10 +941,10 @@ def upload_video() -> Response | tuple[Response, int]:
 @app.get("/api/jobs/<job_id>")
 def upload_job(job_id: str) -> Response | tuple[Response, int]:
     if not re.fullmatch(r"[0-9a-f]{32}", job_id):
-        return jsonify({"error": "id pekerjaan tidak valid"}), 400
+        return jsonify({"error": "invalid job id"}), 400
     job = service.get_upload_job(job_id)
     if job is None:
-        return jsonify({"error": "pekerjaan tidak ditemukan"}), 404
+        return jsonify({"error": "job not found"}), 404
     return jsonify(service.public_job(job))
 
 
@@ -952,10 +952,10 @@ def upload_job(job_id: str) -> Response | tuple[Response, int]:
 def upload_job_frame(job_id: str) -> Response | tuple[Response, int]:
     job = service.get_upload_job(job_id)
     if job is None:
-        return jsonify({"error": "pekerjaan tidak ditemukan"}), 404
+        return jsonify({"error": "job not found"}), 404
     jpeg = job.get("latest_jpeg")
     if not isinstance(jpeg, bytes):
-        return jsonify({"error": "preview belum tersedia"}), 404
+        return jsonify({"error": "preview is not available yet"}), 404
     return Response(jpeg, mimetype="image/jpeg", headers={"Cache-Control": "no-store"})
 
 
@@ -963,18 +963,18 @@ def upload_job_frame(job_id: str) -> Response | tuple[Response, int]:
 def browser_camera_frame() -> Response | tuple[Response, int]:
     uploaded = request.files.get("frame")
     if uploaded is None:
-        return jsonify({"error": "frame wajib diisi"}), 400
+        return jsonify({"error": "a frame is required"}), 400
     raw = uploaded.read()
     if not raw or len(raw) > 5 * 1024 * 1024:
-        return jsonify({"error": "ukuran frame tidak valid"}), 400
+        return jsonify({"error": "invalid frame size"}), 400
     frame = cv2.imdecode(np.frombuffer(raw, dtype=np.uint8), cv2.IMREAD_COLOR)
     if frame is None:
-        return jsonify({"error": "format frame tidak valid"}), 400
+        return jsonify({"error": "invalid frame format"}), 400
     try:
         jpeg, detections = service.process_external_frame(frame, "browser_camera")
     except Exception as exc:
         logger.error("BROWSER CAMERA FAILED | %s", _safe_error(exc))
-        return jsonify({"error": "pemrosesan kamera gagal"}), 500
+        return jsonify({"error": "camera processing failed"}), 500
     return jsonify({"image": base64.b64encode(jpeg).decode("ascii"), "detections": detections})
 
 

@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <base href="../" />
-    <title>Monitor Retakan</title>
+    <title>Crack Detection Monitor</title>
     <style>
       :root {
         --canvas: #f3f8f7;
@@ -193,49 +193,6 @@
       .action:active {
         transform: scale(0.98);
       }
-      .log-panel {
-        min-height: 300px;
-        overflow: hidden;
-        border: 1px solid var(--line);
-        border-radius: 18px;
-        background: var(--surface);
-        box-shadow: var(--shadow);
-      }
-      .log-head {
-        display: flex;
-        gap: 7px;
-        align-items: center;
-        padding: 13px 15px;
-        border-bottom: 1px solid var(--line);
-        color: var(--muted);
-        font:
-          600 0.68rem/1 "JetBrains Mono",
-          Consolas,
-          monospace;
-      }
-      .dot {
-        width: 7px;
-        height: 7px;
-        border-radius: 50%;
-        background: #c4d2cc;
-      }
-      .dot:first-child {
-        background: #65bda4;
-      }
-      #logs {
-        height: min(38dvh, 420px);
-        margin: 0;
-        padding: 16px;
-        overflow: auto;
-        background: var(--code);
-        color: #26443a;
-        font:
-          0.77rem/1.62 "JetBrains Mono",
-          Consolas,
-          monospace;
-        white-space: pre-wrap;
-        word-break: break-word;
-      }
       .summary {
         display: grid;
         grid-template-columns: repeat(3, 1fr);
@@ -342,12 +299,6 @@
         #stream {
           max-height: none;
         }
-        .log-panel {
-          min-height: 340px;
-        }
-        #logs {
-          height: 340px;
-        }
       }
     </style>
   </head>
@@ -360,40 +311,40 @@
         </div>
         <div class="top-meta">
           <span class="signal" id="signal"></span
-          ><span id="connection">Menyambungkan ke server</span>
+          ><span id="connection">Connecting to server</span>
         </div>
       </header>
-      <section class="layout" aria-label="Monitoring deteksi retakan">
+      <section class="layout" aria-label="Crack detection monitoring">
         <article class="video-zone">
           <div class="section-title">
-            <h2>Video Deteksi</h2>
-            <span class="caption" id="source-label">memuat sumber</span>
+            <h2>Detection Preview</h2>
+            <span class="caption" id="source-label">loading source</span>
           </div>
           <div class="video-frame">
             <video id="camera-input" autoplay playsinline hidden></video>
             <img
               id="stream"
-              alt="Stream video dengan area retakan terdeteksi"
+              alt="Annotated crack detection stream"
             /><span class="stream-note" id="stream-note"
-              >Pilih video atau kamera untuk memulai.</span
+              >Choose a video or camera to begin.</span
             >
           </div>
           <canvas id="camera-canvas" hidden></canvas>
-          <section class="source-controls" aria-label="Sumber input">
+          <section class="source-controls" aria-label="Input source">
             <form class="control-row" id="upload-form">
               <label>Upload video
                 <input id="video-file" name="video" type="file" accept="video/mp4,video/quicktime,video/x-msvideo,video/x-matroska,video/webm" required />
               </label>
-              <button class="action" type="submit">Proses video</button>
-              <span class="control-message" id="upload-state">Belum ada video.</span>
+              <button class="action" type="submit">Process video</button>
+              <span class="control-message" id="upload-state">No video selected.</span>
             </form>
             <div class="control-row">
-              <label>Kamera perangkat
-                <select id="camera-select"><option value="">Minta izin kamera dahulu</option></select>
+              <label>Device camera
+                <select id="camera-select"><option value="">Allow camera access first</option></select>
               </label>
-              <button class="action" type="button" id="start-camera">Mulai kamera</button>
-              <button class="action" type="button" id="stop-camera">Berhenti</button>
-              <span class="control-message" id="camera-state">Kamera belum aktif.</span>
+              <button class="action" type="button" id="start-camera">Start camera</button>
+              <button class="action" type="button" id="stop-camera">Stop</button>
+              <span class="control-message" id="camera-state">Camera is not active.</span>
             </div>
           </section>
           <div class="summary" aria-label="Ringkasan proses">
@@ -401,13 +352,13 @@
               <span>Frame diproses</span><strong id="frames">-</strong>
             </div>
             <div class="metric">
-              <span>Deteksi</span><strong id="detections">-</strong>
+              <span>Detections</span><strong id="detections">-</strong>
             </div>
             <div class="metric">
-              <span>Bukti disimpan</span><strong id="saved">-</strong>
+              <span>Evidence saved</span><strong id="saved">-</strong>
             </div>
             <div class="metric">
-              <span>Duplikat dilewati</span
+              <span>Duplicates skipped</span
               ><strong id="duplicate-skips">-</strong>
             </div>
             <div class="metric">
@@ -421,31 +372,11 @@
         <aside class="json-zone">
           <section class="right-section">
             <div class="log-toolbar">
-              <h2>Deteksi terbaru</h2>
+              <h2>Recent detections</h2>
               <span class="caption" id="detection-count">0 record</span>
             </div>
             <div class="recent-list" id="recent-list">
-              <div class="empty-state">Belum ada bukti deteksi.</div>
-            </div>
-          </section>
-          <section class="right-section">
-            <div class="log-toolbar">
-              <h2>Log JSON</h2>
-              <div class="toolbar-actions">
-                <button class="action" type="button" id="reconnect">
-                  Reconnect
-                </button>
-                <button class="action" type="button" id="refresh">
-                  Muat ulang
-                </button>
-              </div>
-            </div>
-            <div class="log-panel">
-              <div class="log-head">
-                <i class="dot"></i><i class="dot"></i><i class="dot"></i
-                ><span>API /health + /stats + /documents</span>
-              </div>
-              <pre id="logs">Mengambil status server...</pre>
+              <div class="empty-state">No detection evidence yet.</div>
             </div>
           </section>
         </aside>
@@ -474,7 +405,6 @@
       document.querySelector("#developer-mark").textContent = developerMark;
       const signal = document.querySelector("#signal"),
         connection = document.querySelector("#connection"),
-        logs = document.querySelector("#logs"),
         note = document.querySelector("#stream-note"),
         stream = document.querySelector("#stream");
       const fields = ["frames", "detections", "saved"];
@@ -490,7 +420,7 @@
         if (!documents.length) {
           const empty = document.createElement("div");
           empty.className = "empty-state";
-          empty.textContent = "Belum ada bukti deteksi pada sesi ini.";
+          empty.textContent = "No detection evidence in this session.";
           list.append(empty);
           return;
         }
@@ -500,7 +430,7 @@
           card.className = "detection-card";
           const image = document.createElement("img");
           image.loading = "lazy";
-          image.alt = `Bukti ${data.label || "retakan"}`;
+          image.alt = `Evidence: ${data.label || "crack"}`;
           image.src =
             data.image_url || `static/images/${data.image_name || ""}`;
           image.addEventListener(
@@ -509,7 +439,7 @@
           );
           const detail = document.createElement("div");
           const title = document.createElement("strong");
-          title.textContent = data.label || "Retakan";
+          title.textContent = data.label || "Crack";
           const confidence = document.createElement("span");
           confidence.textContent = `Confidence: ${Math.round((Number(data.confidence) || 0) * 100)}%`;
           const timestamp = document.createElement("span");
@@ -517,7 +447,7 @@
           timestamp.textContent =
             date && !Number.isNaN(date.valueOf())
               ? date.toLocaleString("id-ID")
-              : "Waktu tidak tersedia";
+              : "Time unavailable";
           detail.append(title, confidence, timestamp);
           card.append(image, detail);
           list.append(card);
@@ -540,7 +470,7 @@
                 stats[key] ?? health[key] ?? "-"),
           );
           document.querySelector("#source-label").textContent =
-            health.source_status || "sumber belum aktif";
+            health.source_status || "source is not active";
           document.querySelector("#duplicate-skips").textContent =
             stats.detections_skipped_duplicate ?? "-";
           document.querySelector("#processing-fps").textContent =
@@ -548,34 +478,18 @@
           document.querySelector("#database-state").textContent =
             health.database_status || "-";
           renderDetections(Array.isArray(documents) ? documents : []);
-          logs.textContent = JSON.stringify(
-            { health, stats, documents },
-            null,
-            2,
-          );
           setConnection(
             health.ok
-              ? "Server terhubung"
-              : "Server siap, model belum tersedia",
+              ? "Server connected"
+              : "Server is available, but the model is unavailable",
             health.ok ? "live" : "failed",
           );
         } catch (error) {
-          logs.textContent = JSON.stringify(
-            { error: "Gagal menghubungi server", detail: error.message },
-            null,
-            2,
-          );
-          setConnection("Server tidak dapat dihubungi", "failed");
+          setConnection("Server cannot be reached", "failed");
         }
       }
       stream.addEventListener("load", () => note.classList.remove("show"));
       stream.addEventListener("error", () => note.classList.add("show"));
-      document.querySelector("#refresh").addEventListener("click", refresh);
-      document.querySelector("#reconnect").addEventListener("click", () => {
-        note.classList.add("show");
-        stream.src = `video?reconnect=${Date.now()}`;
-        refresh();
-      });
       let cameraStream = null, cameraTimer = null, cameraSending = false, activeJob = null, jobTimer = null;
       const cameraInput = document.querySelector("#camera-input"), cameraCanvas = document.querySelector("#camera-canvas"), cameraSelect = document.querySelector("#camera-select");
       async function listCameras() {
@@ -584,7 +498,7 @@
         cameraSelect.replaceChildren();
         cameras.forEach((camera, index) => {
           const option = document.createElement("option"); option.value = camera.deviceId;
-          option.textContent = camera.label || `Kamera ${index + 1}`; cameraSelect.append(option);
+          option.textContent = camera.label || `Camera ${index + 1}`; cameraSelect.append(option);
         });
       }
       async function sendCameraFrame() {
@@ -599,12 +513,12 @@
           if (!blob) return;
           const data = new FormData(); data.append("frame", blob, "camera.jpg");
           const response = await fetch("api/camera/frame", { method: "POST", body: data });
-          if (!response.ok) throw new Error("server menolak frame");
+          if (!response.ok) throw new Error("server rejected the frame");
           const result = await response.json();
           stream.src = `data:image/jpeg;base64,${result.image}`;
           stream.classList.add("camera-overlay");
-          document.querySelector("#camera-state").textContent = `${result.detections.length} deteksi pada frame terakhir`;
-        } catch (error) { document.querySelector("#camera-state").textContent = `Kamera gagal diproses: ${error.message}`; }
+          document.querySelector("#camera-state").textContent = `${result.detections.length} detections in the latest frame`;
+        } catch (error) { document.querySelector("#camera-state").textContent = `Camera processing failed: ${error.message}`; }
         finally {
           cameraSending = false;
           if (cameraStream) cameraTimer = setTimeout(sendCameraFrame, 0);
@@ -612,39 +526,39 @@
       }
       document.querySelector("#start-camera").addEventListener("click", async () => {
         try {
-          if (!navigator.mediaDevices?.getUserMedia) throw new Error("browser membutuhkan HTTPS untuk kamera");
+          if (!navigator.mediaDevices?.getUserMedia) throw new Error("your browser requires HTTPS for camera access");
           if (cameraStream) cameraStream.getTracks().forEach((track) => track.stop());
           cameraStream = await navigator.mediaDevices.getUserMedia({ video: { deviceId: cameraSelect.value ? { exact: cameraSelect.value } : undefined, width: { ideal: 640 }, height: { ideal: 360 } }, audio: false });
           cameraInput.srcObject = cameraStream; await cameraInput.play(); await listCameras();
           cameraInput.hidden = false; stream.removeAttribute("src"); stream.classList.remove("camera-overlay");
           clearTimeout(cameraTimer); sendCameraFrame();
-          document.querySelector("#camera-state").textContent = "Kamera live aktif; server selalu memproses frame terbaru tanpa antrean.";
-        } catch (error) { document.querySelector("#camera-state").textContent = `Kamera tidak dapat diakses: ${error.message}`; }
+          document.querySelector("#camera-state").textContent = "Live camera active; the server always processes the newest frame without a queue.";
+        } catch (error) { document.querySelector("#camera-state").textContent = `Camera access failed: ${error.message}`; }
       });
       document.querySelector("#stop-camera").addEventListener("click", () => {
         clearTimeout(cameraTimer); cameraTimer = null;
         if (cameraStream) cameraStream.getTracks().forEach((track) => track.stop()); cameraStream = null; cameraInput.hidden = true; stream.classList.remove("camera-overlay");
-        document.querySelector("#camera-state").textContent = "Kamera dihentikan.";
+        document.querySelector("#camera-state").textContent = "Camera stopped.";
       });
       document.querySelector("#upload-form").addEventListener("submit", async (event) => {
         event.preventDefault(); const file = document.querySelector("#video-file").files[0]; if (!file) return;
-        const state = document.querySelector("#upload-state"); state.textContent = "Mengunggah video…";
+        const state = document.querySelector("#upload-state"); state.textContent = "Uploading video…";
         try {
           const data = new FormData(); data.append("video", file);
           const response = await fetch("api/upload", { method: "POST", body: data });
-          if (!response.ok) throw new Error((await response.json()).error || "upload gagal");
-          activeJob = await response.json(); state.textContent = "Video masuk antrean pemrosesan.";
+          if (!response.ok) throw new Error((await response.json()).error || "upload failed");
+          activeJob = await response.json(); state.textContent = "Video is queued for processing.";
           clearInterval(jobTimer); jobTimer = setInterval(refreshJob, 1000); refreshJob();
-        } catch (error) { state.textContent = `Upload gagal: ${error.message}`; }
+        } catch (error) { state.textContent = `Upload failed: ${error.message}`; }
       });
       async function refreshJob() {
         if (!activeJob) return; const state = document.querySelector("#upload-state");
         try {
           const response = await fetch(`api/jobs/${activeJob.id}`); const job = await response.json();
-          state.textContent = `${job.status}: ${job.progress}% · ${job.frames_processed} frame diproses · ${job.detections} deteksi`;
+          state.textContent = `${job.status}: ${job.progress}% · ${job.frames_processed} frames processed · ${job.detections} detections`;
           stream.src = `api/jobs/${job.id}/frame?at=${Date.now()}`;
           if (["completed", "failed"].includes(job.status)) { clearInterval(jobTimer); refresh(); }
-        } catch (error) { state.textContent = `Status pekerjaan gagal: ${error.message}`; }
+        } catch (error) { state.textContent = `Job status failed: ${error.message}`; }
       }
       refresh();
       setInterval(refresh, 5000);
