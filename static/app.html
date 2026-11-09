@@ -3,6 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <base href="../" />
     <title>Monitor Retakan</title>
     <style>
       :root {
@@ -312,6 +313,11 @@
         line-height: 1.4;
         text-align: center;
       }
+      .source-controls { margin-top: 16px; display: grid; gap: 12px; }
+      .control-row { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+      .control-row label { display: grid; gap: 5px; color: var(--muted); font-size: .78rem; font-weight: 700; }
+      .control-row input, .control-row select { max-width: 280px; padding: 8px; border: 1px solid var(--line); border-radius: 7px; background: #fff; }
+      .control-message { color: var(--muted); font-size: .82rem; }
       @media (max-width: 850px) {
         .shell {
           padding: 18px;
@@ -362,12 +368,30 @@
           <div class="video-frame">
             <img
               id="stream"
-              src="/video"
               alt="Stream video dengan area retakan terdeteksi"
             /><span class="stream-note" id="stream-note"
-              >Stream sedang disambungkan.</span
+              >Pilih video atau kamera untuk memulai.</span
             >
           </div>
+          <video id="camera-input" autoplay playsinline hidden></video>
+          <canvas id="camera-canvas" hidden></canvas>
+          <section class="source-controls" aria-label="Sumber input">
+            <form class="control-row" id="upload-form">
+              <label>Upload video
+                <input id="video-file" name="video" type="file" accept="video/mp4,video/quicktime,video/x-msvideo,video/x-matroska,video/webm" required />
+              </label>
+              <button class="action" type="submit">Proses video</button>
+              <span class="control-message" id="upload-state">Belum ada video.</span>
+            </form>
+            <div class="control-row">
+              <label>Kamera perangkat
+                <select id="camera-select"><option value="">Minta izin kamera dahulu</option></select>
+              </label>
+              <button class="action" type="button" id="start-camera">Mulai kamera</button>
+              <button class="action" type="button" id="stop-camera">Berhenti</button>
+              <span class="control-message" id="camera-state">Kamera belum aktif.</span>
+            </div>
+          </section>
           <div class="summary" aria-label="Ringkasan proses">
             <div class="metric">
               <span>Frame diproses</span><strong id="frames">-</strong>
@@ -474,7 +498,7 @@
           image.loading = "lazy";
           image.alt = `Bukti ${data.label || "retakan"}`;
           image.src =
-            data.image_url || `/static/images/${data.image_name || ""}`;
+            data.image_url || `static/images/${data.image_name || ""}`;
           image.addEventListener(
             "error",
             () => (image.style.visibility = "hidden"),
@@ -499,9 +523,9 @@
         try {
           const [healthResponse, statsResponse, documentsResponse] =
             await Promise.all([
-              fetch("/health"),
-              fetch("/stats"),
-              fetch("/documents?limit=20"),
+              fetch("health"),
+              fetch("stats"),
+              fetch("documents?limit=20"),
             ]);
           const health = await healthResponse.json(),
             stats = await statsResponse.json(),
@@ -545,9 +569,70 @@
       document.querySelector("#refresh").addEventListener("click", refresh);
       document.querySelector("#reconnect").addEventListener("click", () => {
         note.classList.add("show");
-        stream.src = `/video?reconnect=${Date.now()}`;
+        stream.src = `video?reconnect=${Date.now()}`;
         refresh();
       });
+      let cameraStream = null, cameraTimer = null, activeJob = null, jobTimer = null;
+      const cameraInput = document.querySelector("#camera-input"), cameraCanvas = document.querySelector("#camera-canvas"), cameraSelect = document.querySelector("#camera-select");
+      async function listCameras() {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const cameras = devices.filter((item) => item.kind === "videoinput");
+        cameraSelect.replaceChildren();
+        cameras.forEach((camera, index) => {
+          const option = document.createElement("option"); option.value = camera.deviceId;
+          option.textContent = camera.label || `Kamera ${index + 1}`; cameraSelect.append(option);
+        });
+      }
+      async function sendCameraFrame() {
+        if (!cameraStream || cameraInput.videoWidth < 2) return;
+        cameraCanvas.width = cameraInput.videoWidth; cameraCanvas.height = cameraInput.videoHeight;
+        cameraCanvas.getContext("2d").drawImage(cameraInput, 0, 0);
+        const blob = await new Promise((resolve) => cameraCanvas.toBlob(resolve, "image/jpeg", .75));
+        if (!blob) return;
+        const data = new FormData(); data.append("frame", blob, "camera.jpg");
+        try {
+          const response = await fetch("api/camera/frame", { method: "POST", body: data });
+          if (!response.ok) throw new Error("server menolak frame");
+          const result = await response.json();
+          stream.src = `data:image/jpeg;base64,${result.image}`;
+          document.querySelector("#camera-state").textContent = `${result.detections.length} deteksi pada frame terakhir`;
+        } catch (error) { document.querySelector("#camera-state").textContent = `Kamera gagal diproses: ${error.message}`; }
+      }
+      document.querySelector("#start-camera").addEventListener("click", async () => {
+        try {
+          if (!navigator.mediaDevices?.getUserMedia) throw new Error("browser membutuhkan HTTPS untuk kamera");
+          if (cameraStream) cameraStream.getTracks().forEach((track) => track.stop());
+          cameraStream = await navigator.mediaDevices.getUserMedia({ video: { deviceId: cameraSelect.value ? { exact: cameraSelect.value } : undefined, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+          cameraInput.srcObject = cameraStream; await cameraInput.play(); await listCameras();
+          clearInterval(cameraTimer); cameraTimer = setInterval(sendCameraFrame, 1400); sendCameraFrame();
+          document.querySelector("#camera-state").textContent = "Kamera aktif; frame dikirim bertahap ke server.";
+        } catch (error) { document.querySelector("#camera-state").textContent = `Kamera tidak dapat diakses: ${error.message}`; }
+      });
+      document.querySelector("#stop-camera").addEventListener("click", () => {
+        clearInterval(cameraTimer); cameraTimer = null;
+        if (cameraStream) cameraStream.getTracks().forEach((track) => track.stop()); cameraStream = null;
+        document.querySelector("#camera-state").textContent = "Kamera dihentikan.";
+      });
+      document.querySelector("#upload-form").addEventListener("submit", async (event) => {
+        event.preventDefault(); const file = document.querySelector("#video-file").files[0]; if (!file) return;
+        const state = document.querySelector("#upload-state"); state.textContent = "Mengunggah video…";
+        try {
+          const data = new FormData(); data.append("video", file);
+          const response = await fetch("api/upload", { method: "POST", body: data });
+          if (!response.ok) throw new Error((await response.json()).error || "upload gagal");
+          activeJob = await response.json(); state.textContent = "Video masuk antrean pemrosesan.";
+          clearInterval(jobTimer); jobTimer = setInterval(refreshJob, 1000); refreshJob();
+        } catch (error) { state.textContent = `Upload gagal: ${error.message}`; }
+      });
+      async function refreshJob() {
+        if (!activeJob) return; const state = document.querySelector("#upload-state");
+        try {
+          const response = await fetch(`api/jobs/${activeJob.id}`); const job = await response.json();
+          state.textContent = `${job.status}: ${job.progress}% · ${job.frames_processed} frame diproses · ${job.detections} deteksi`;
+          stream.src = `api/jobs/${job.id}/frame?at=${Date.now()}`;
+          if (["completed", "failed"].includes(job.status)) { clearInterval(jobTimer); refresh(); }
+        } catch (error) { state.textContent = `Status pekerjaan gagal: ${error.message}`; }
+      }
       refresh();
       setInterval(refresh, 5000);
     </script>

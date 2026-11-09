@@ -40,6 +40,7 @@ dist/
 # Runtime output and local state
 logs/
 static/images/
+uploads/
 *.log
 *.log.*
 *.pid

@@ -19,10 +19,14 @@ def check(name: str, condition: bool) -> None:
 def main() -> int:
     server.service.initialize()
     client = server.app.test_client()
+    check("protected API rejects anonymous access", client.get("/health").status_code == 401)
+    with client.session_transaction() as session:
+        session["authenticated"] = True
+        session["username"] = server.CONFIG.admin_username
     check("model loaded", server.service.model is not None)
     check("model task is segment", server.service.model_task == "segment")
     for path, expected in [("/", 200), ("/health", 200), ("/stats", 200), ("/documents?limit=5", 200), ("/documents/not-a-valid-id", 400), ("/documents?limit=9999", 400)]:
-        check(f"GET {path} -> {expected}", client.get(path).status_code == expected)
+        check(f"GET {path} -> {expected}", client.get(path, follow_redirects=True).status_code == expected)
     cap = server.service._open_source()
     check("sample source opens", cap is not None and cap.isOpened())
     ok, frame = cap.read() if cap is not None else (False, None)

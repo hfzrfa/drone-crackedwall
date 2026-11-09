@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import _thread
 import atexit
+import base64
 import csv
 import json
 import logging
@@ -22,7 +23,10 @@ from typing import Any, Iterator
 import cv2
 import numpy as np
 from dotenv import load_dotenv
-from flask import Flask, Response, jsonify, request
+from flask import Flask, Response, jsonify, redirect, request, session, url_for
+from werkzeug.middleware.proxy_fix import ProxyFix
+from werkzeug.security import check_password_hash, generate_password_hash
+from werkzeug.utils import secure_filename
 from werkzeug.exceptions import HTTPException
 
 from attribution import decode_attribution
@@ -31,9 +35,11 @@ ROOT = Path(__file__).resolve().parent
 load_dotenv(ROOT / ".env")
 IMAGE_DIR = ROOT / "static" / "images"
 LOG_DIR = ROOT / "logs"
+UPLOAD_DIR = ROOT / "uploads"
 COPY_ID_FILE = ROOT / "distribution" / "copy_id.json"
 IMAGE_DIR.mkdir(parents=True, exist_ok=True)
 LOG_DIR.mkdir(parents=True, exist_ok=True)
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _load_copy_id(path: Path = COPY_ID_FILE) -> str:
@@ -146,6 +152,12 @@ class Config:
     source_override: str = os.getenv("SOURCE_TYPE", "").strip().lower()
     public_base_url: str = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
     app_debug: bool = _env_bool("APP_DEBUG", False)
+    admin_username: str = os.getenv("ADMIN_USERNAME", "admin").strip() or "admin"
+    admin_password: str = os.getenv("ADMIN_PASSWORD", "").strip()
+    admin_password_hash: str = os.getenv("ADMIN_PASSWORD_HASH", "").strip()
+    session_secret: str = os.getenv("SESSION_SECRET", "").strip()
+    upload_max_mib: int = _env_int("UPLOAD_MAX_MIB", 500, 10)
+    upload_process_fps: float = _env_float("UPLOAD_PROCESS_FPS", 1.0, 0.1)
 
     @property
     def model_path(self) -> Path:
@@ -222,6 +234,7 @@ class CrackDetectionService:
     def __init__(self, config: Config) -> None:
         self.config = config
         self.lock = threading.RLock()
+        self.model_lock = threading.Lock()
         self.frame_ready = threading.Condition(self.lock)
         self.global_stop = threading.Event()
         self.worker_stop = threading.Event()
@@ -256,6 +269,8 @@ class CrackDetectionService:
             "connected_video_clients": 0,
             "processing_fps": 0.0,
         }
+        self.jobs: dict[str, dict[str, Any]] = {}
+        self.jobs_lock = threading.RLock()
 
     @property
     def base_url(self) -> str:
@@ -313,6 +328,9 @@ class CrackDetectionService:
             client.admin.command("ping")
             self.mongo_client = client
             self.collection = client[self.config.db_name][self.config.collection_name]
+            self.collection.create_index([("data.timestamp", -1)], name="timestamp_desc")
+            self.collection.create_index([("data.source", 1), ("data.timestamp", -1)], name="source_timestamp")
+            self.collection.create_index([("data.status", 1), ("data.timestamp", -1)], name="status_timestamp")
             self.database_status = "connected"
             logger.info("MONGODB CONNECTED | database=%s collection=%s", self.config.db_name, self.config.collection_name)
         except Exception as exc:
@@ -379,7 +397,10 @@ class CrackDetectionService:
         if self.model is None:
             return frame, []
         try:
-            result = self.model(frame, conf=self.config.confidence, imgsz=640, verbose=False)[0]
+            # Ultralytics inference is serialized: browser camera and uploaded-video
+            # jobs must never run the same model concurrently on this small ECS.
+            with self.model_lock:
+                result = self.model(frame, conf=self.config.confidence, imgsz=640, verbose=False)[0]
             annotated = result.plot()
             boxes = getattr(result, "boxes", None)
             masks = getattr(result, "masks", None)
@@ -405,7 +426,7 @@ class CrackDetectionService:
         cleaned = re.sub(r"[^a-zA-Z0-9_-]+", "_", label).strip("_")
         return cleaned[:40] or "crack"
 
-    def _store_detection(self, frame: np.ndarray, detections: list[dict[str, Any]]) -> None:
+    def _store_detection(self, frame: np.ndarray, detections: list[dict[str, Any]], source: str | None = None) -> None:
         now_monotonic = time.monotonic()
         with self.lock:
             if now_monotonic - self.last_saved_monotonic < self.config.save_interval_seconds:
@@ -423,7 +444,7 @@ class CrackDetectionService:
             "status": "crack_detected", "timestamp": stamp.isoformat(), **best,
             "image_name": filename,
             "image_url": f"{self.base_url}/static/images/{filename}",
-            "source": self.config.source_type,
+            "source": source or self.config.source_type,
             "copy_id": COPY_ID,
             "image_content_width": int(frame.shape[1]),
             "image_content_height": int(content_height),
@@ -451,6 +472,94 @@ class CrackDetectionService:
             self.stats["detections_saved"] += 1
             self.stats["detections_skipped_duplicate"] += max(0, len(detections) - 1)
         logger.info("DETECTION SAVED | label=%s confidence=%.4f image=%s", best["label"], best["confidence"], filename)
+
+    def process_external_frame(self, frame: np.ndarray, source: str) -> tuple[bytes, list[dict[str, Any]]]:
+        """Run one browser-supplied frame through the model and return JPEG output."""
+        started = time.monotonic()
+        annotated, detections = self._detect(self._resize(frame))
+        with self.lock:
+            self.stats["frames_read"] += 1
+            self.stats["frames_processed"] += 1
+            self.stats["detections_seen"] += len(detections)
+            fps = 1.0 / max(time.monotonic() - started, 0.0001)
+            old = float(self.stats["processing_fps"])
+            self.stats["processing_fps"] = round(fps if old == 0 else old * 0.8 + fps * 0.2, 2)
+        if detections:
+            self._store_detection(annotated, detections, source=source)
+        ok, encoded = cv2.imencode(".jpg", annotated, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        if not ok:
+            raise ValueError("could not encode processed frame")
+        return encoded.tobytes(), detections
+
+    def create_upload_job(self, path: Path, original_name: str) -> dict[str, Any]:
+        job = {
+            "id": uuid.uuid4().hex,
+            "name": original_name,
+            "path": str(path),
+            "status": "queued",
+            "progress": 0.0,
+            "frames_processed": 0,
+            "frames_total": 0,
+            "detections": 0,
+            "error": None,
+            "latest_jpeg": None,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        with self.jobs_lock:
+            self.jobs[job["id"]] = job
+        threading.Thread(target=self._run_upload_job, args=(job["id"],), name=f"upload-{job['id'][:8]}", daemon=True).start()
+        return self.public_job(job)
+
+    @staticmethod
+    def public_job(job: dict[str, Any]) -> dict[str, Any]:
+        return {key: value for key, value in job.items() if key not in {"path", "latest_jpeg"}}
+
+    def get_upload_job(self, job_id: str) -> dict[str, Any] | None:
+        with self.jobs_lock:
+            job = self.jobs.get(job_id)
+            return dict(job) if job else None
+
+    def _run_upload_job(self, job_id: str) -> None:
+        with self.jobs_lock:
+            job = self.jobs.get(job_id)
+            if job is None:
+                return
+            job["status"] = "processing"
+            path = Path(str(job["path"]))
+        cap = cv2.VideoCapture(str(path))
+        if not cap.isOpened():
+            with self.jobs_lock:
+                job["status"], job["error"] = "failed", "video tidak dapat dibuka"
+            return
+        total = max(0, int(cap.get(cv2.CAP_PROP_FRAME_COUNT)))
+        source_fps = max(1.0, float(cap.get(cv2.CAP_PROP_FPS) or 0.0))
+        stride = max(1, round(source_fps / self.config.upload_process_fps))
+        with self.jobs_lock:
+            job["frames_total"] = total
+        frame_no = 0
+        try:
+            while not self.global_stop.is_set():
+                ok, frame = cap.read()
+                if not ok or frame is None:
+                    break
+                frame_no += 1
+                if frame_no % stride:
+                    continue
+                jpeg, detections = self.process_external_frame(frame, "browser_upload")
+                with self.jobs_lock:
+                    job["latest_jpeg"] = jpeg
+                    job["frames_processed"] += 1
+                    job["detections"] += len(detections)
+                    job["progress"] = round(min(100.0, frame_no * 100 / total), 1) if total else 0.0
+            with self.jobs_lock:
+                job["progress"] = 100.0
+                job["status"] = "completed"
+        except Exception as exc:
+            logger.error("UPLOAD JOB FAILED | id=%s error=%s", job_id, _safe_error(exc))
+            with self.jobs_lock:
+                job["status"], job["error"] = "failed", "pemrosesan video gagal"
+        finally:
+            cap.release()
 
     def _publish(self, frame: np.ndarray) -> None:
         encoded, buffer = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
@@ -669,11 +778,104 @@ class CrackDetectionService:
 service = CrackDetectionService(CONFIG)
 app = Flask(__name__, static_folder="static")
 app.config["JSON_SORT_KEYS"] = False
+app.config.update(
+    SECRET_KEY=CONFIG.session_secret or "deployment-secret-missing",
+    MAX_CONTENT_LENGTH=CONFIG.upload_max_mib * 1024 * 1024,
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SECURE=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+_LOGIN_ATTEMPTS: dict[str, list[float]] = {}
+_LOGIN_ATTEMPTS_LOCK = threading.Lock()
+
+
+def _login_is_rate_limited(remote_address: str) -> bool:
+    """Allow at most five failed login attempts per ten minutes per client IP."""
+    now = time.monotonic()
+    with _LOGIN_ATTEMPTS_LOCK:
+        attempts = [item for item in _LOGIN_ATTEMPTS.get(remote_address, []) if now - item < 600]
+        _LOGIN_ATTEMPTS[remote_address] = attempts
+        return len(attempts) >= 5
+
+
+def _record_failed_login(remote_address: str) -> None:
+    with _LOGIN_ATTEMPTS_LOCK:
+        _LOGIN_ATTEMPTS.setdefault(remote_address, []).append(time.monotonic())
+
+
+def _clear_failed_logins(remote_address: str) -> None:
+    with _LOGIN_ATTEMPTS_LOCK:
+        _LOGIN_ATTEMPTS.pop(remote_address, None)
+
+
+def _password_matches(value: str) -> bool:
+    if CONFIG.admin_password_hash:
+        return check_password_hash(CONFIG.admin_password_hash, value)
+    return bool(CONFIG.admin_password) and value == CONFIG.admin_password
+
+
+def _is_authenticated() -> bool:
+    return bool(session.get("authenticated"))
+
+
+@app.before_request
+def require_login() -> Response | None:
+    allowed = {"login", "login_submit", "logout"}
+    if request.endpoint in allowed or request.path.startswith("/.well-known/"):
+        return None
+    if _is_authenticated():
+        return None
+    if request.accept_mimetypes.accept_html and not request.path.startswith(("/health", "/stats", "/documents", "/video", "/api/")):
+        return redirect(url_for("login", next=request.path))
+    return jsonify({"error": "authentication required"}), 401
+
+
+@app.after_request
+def security_headers(response: Response) -> Response:
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Permissions-Policy", "camera=(self), microphone=()")
+    response.headers.setdefault("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; media-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'self'; base-uri 'self'")
+    return response
+
+
+@app.get("/login")
+def login() -> Response:
+    if _is_authenticated():
+        return redirect(url_for("index"))
+    return Response("""<!doctype html><html lang=\"id\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Masuk | Crack Detection</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f3f8f7;font:16px system-ui;color:#13231f}form{width:min(360px,calc(100% - 40px));padding:28px;background:#fff;border:1px solid #d8e5df;border-radius:16px;box-shadow:0 18px 48px -34px #123}label,input,button{display:block;width:100%;box-sizing:border-box}label{margin-top:16px;font-weight:650}input{margin-top:6px;padding:11px;border:1px solid #b8cac1;border-radius:8px}button{margin-top:24px;padding:12px;border:0;border-radius:8px;background:#087d63;color:#fff;font-weight:700;cursor:pointer}.error{color:#b74635}</style><form method=\"post\" action=\"login\"><h1>Crack Detection</h1><p>Masuk untuk membuka dashboard.</p>{error}<label>Username<input name=\"username\" autocomplete=\"username\" required></label><label>Password<input type=\"password\" name=\"password\" autocomplete=\"current-password\" required></label><button>Masuk</button></form></html>""".replace("{error}", "<p class=\"error\">Kredensial belum dikonfigurasi.</p>" if not (CONFIG.admin_password or CONFIG.admin_password_hash) else ""), mimetype="text/html")
+
+
+@app.post("/login")
+def login_submit() -> Response:
+    username = str(request.form.get("username", ""))
+    password = str(request.form.get("password", ""))
+    remote_address = request.remote_addr or "unknown"
+    if _login_is_rate_limited(remote_address):
+        return Response("Terlalu banyak percobaan login. Coba lagi dalam sepuluh menit.", status=429, mimetype="text/plain")
+    if username != CONFIG.admin_username or not _password_matches(password):
+        _record_failed_login(remote_address)
+        time.sleep(0.5)
+        return Response("Kredensial tidak valid.", status=401, mimetype="text/plain")
+    _clear_failed_logins(remote_address)
+    session.clear()
+    session["authenticated"] = True
+    session["username"] = CONFIG.admin_username
+    target = request.args.get("next", "")
+    return redirect(target if target.startswith("/") and not target.startswith("//") else url_for("index"))
+
+
+@app.post("/logout")
+def logout() -> Response:
+    session.clear()
+    return redirect(url_for("login"))
 
 
 @app.get("/")
 def index() -> Response:
-    return jsonify({"service": "YOLO Crack Detection API", "copy_id": COPY_ID, "dashboard": "/static/app.html", "video": "/video", "documents": "/documents?limit=20", "health": "/health", "stats": "/stats"})
+    return redirect(url_for("static", filename="app.html"))
 
 
 @app.get("/health")
@@ -719,6 +921,61 @@ def document(document_id: str) -> tuple[Response, int]:
 @app.get("/stats")
 def stats() -> Response:
     return jsonify(service.stats_payload())
+
+
+@app.post("/api/upload")
+def upload_video() -> Response | tuple[Response, int]:
+    uploaded = request.files.get("video")
+    if uploaded is None or not uploaded.filename:
+        return jsonify({"error": "file video wajib diisi"}), 400
+    extension = Path(secure_filename(uploaded.filename)).suffix.lower()
+    if extension not in {".mp4", ".mov", ".avi", ".mkv", ".webm"}:
+        return jsonify({"error": "format video tidak didukung"}), 400
+    stored_name = f"{uuid.uuid4().hex}{extension}"
+    destination = UPLOAD_DIR / stored_name
+    uploaded.save(destination)
+    job = service.create_upload_job(destination, secure_filename(uploaded.filename))
+    return jsonify(job), 202
+
+
+@app.get("/api/jobs/<job_id>")
+def upload_job(job_id: str) -> Response | tuple[Response, int]:
+    if not re.fullmatch(r"[0-9a-f]{32}", job_id):
+        return jsonify({"error": "id pekerjaan tidak valid"}), 400
+    job = service.get_upload_job(job_id)
+    if job is None:
+        return jsonify({"error": "pekerjaan tidak ditemukan"}), 404
+    return jsonify(service.public_job(job))
+
+
+@app.get("/api/jobs/<job_id>/frame")
+def upload_job_frame(job_id: str) -> Response | tuple[Response, int]:
+    job = service.get_upload_job(job_id)
+    if job is None:
+        return jsonify({"error": "pekerjaan tidak ditemukan"}), 404
+    jpeg = job.get("latest_jpeg")
+    if not isinstance(jpeg, bytes):
+        return jsonify({"error": "preview belum tersedia"}), 404
+    return Response(jpeg, mimetype="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/camera/frame")
+def browser_camera_frame() -> Response | tuple[Response, int]:
+    uploaded = request.files.get("frame")
+    if uploaded is None:
+        return jsonify({"error": "frame wajib diisi"}), 400
+    raw = uploaded.read()
+    if not raw or len(raw) > 5 * 1024 * 1024:
+        return jsonify({"error": "ukuran frame tidak valid"}), 400
+    frame = cv2.imdecode(np.frombuffer(raw, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if frame is None:
+        return jsonify({"error": "format frame tidak valid"}), 400
+    try:
+        jpeg, detections = service.process_external_frame(frame, "browser_camera")
+    except Exception as exc:
+        logger.error("BROWSER CAMERA FAILED | %s", _safe_error(exc))
+        return jsonify({"error": "pemrosesan kamera gagal"}), 500
+    return jsonify({"image": base64.b64encode(jpeg).decode("ascii"), "detections": detections})
 
 
 @app.errorhandler(HTTPException)
