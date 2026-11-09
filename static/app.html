@@ -257,8 +257,13 @@
         text-transform: uppercase;
         letter-spacing: 0.08em;
       }
-      .right-section { min-width: 0; }
-      .toolbar-actions { display: flex; gap: 8px; }
+      .right-section {
+        min-width: 0;
+      }
+      .toolbar-actions {
+        display: flex;
+        gap: 8px;
+      }
       .recent-list {
         display: grid;
         gap: 10px;
@@ -284,11 +289,20 @@
         background: var(--code);
       }
       .detection-card strong,
-      .detection-card span { display: block; }
-      .detection-card strong { margin-bottom: 4px; }
+      .detection-card span {
+        display: block;
+      }
+      .detection-card strong {
+        margin-bottom: 4px;
+      }
       .detection-card span,
-      .empty-state { color: var(--muted); font-size: 0.77rem; }
-      .empty-state { display: block; }
+      .empty-state {
+        color: var(--muted);
+        font-size: 0.77rem;
+      }
+      .empty-state {
+        display: block;
+      }
       .app-footer {
         margin-top: 24px;
         padding-top: 16px;
@@ -365,7 +379,8 @@
               <span>Bukti disimpan</span><strong id="saved">-</strong>
             </div>
             <div class="metric">
-              <span>Duplikat dilewati</span><strong id="duplicate-skips">-</strong>
+              <span>Duplikat dilewati</span
+              ><strong id="duplicate-skips">-</strong>
             </div>
             <div class="metric">
               <span>FPS proses</span><strong id="processing-fps">-</strong>
@@ -389,8 +404,12 @@
             <div class="log-toolbar">
               <h2>Log JSON</h2>
               <div class="toolbar-actions">
-                <button class="action" type="button" id="reconnect">Reconnect</button>
-                <button class="action" type="button" id="refresh">Muat ulang</button>
+                <button class="action" type="button" id="reconnect">
+                  Reconnect
+                </button>
+                <button class="action" type="button" id="refresh">
+                  Muat ulang
+                </button>
               </div>
             </div>
             <div class="log-panel">
@@ -403,17 +422,25 @@
           </section>
         </aside>
       </section>
-      <footer class="app-footer" id="developer-mark" aria-label="Atribusi pengembang"></footer>
+      <footer
+        class="app-footer"
+        id="developer-mark"
+        aria-label="Atribusi pengembang"
+      ></footer>
     </main>
     <script>
       function revealLabel(masked, seed) {
         const bytes = masked.map(
-          (value, index) => value ^ ((seed + index * 73) & 255) ^ ((index * index * 17) & 255),
+          (value, index) =>
+            value ^ ((seed + index * 73) & 255) ^ ((index * index * 17) & 255),
         );
         return new TextDecoder().decode(new Uint8Array(bytes));
       }
       const developerMark = revealLabel(
-        [31, 208, 223, 202, 3, 14, 5, 126, 135, 173, 243, 14, 119, 65, 59, 41, 153, 99, 152],
+        [
+          31, 208, 223, 202, 3, 14, 5, 126, 135, 173, 243, 14, 119, 65, 59, 41,
+          153, 99, 152,
+        ],
         91,
       );
       document.querySelector("#developer-mark").textContent = developerMark;
@@ -446,8 +473,12 @@
           const image = document.createElement("img");
           image.loading = "lazy";
           image.alt = `Bukti ${data.label || "retakan"}`;
-          image.src = data.image_url || `/static/images/${data.image_name || ""}`;
-          image.addEventListener("error", () => (image.style.visibility = "hidden"));
+          image.src =
+            data.image_url || `/static/images/${data.image_name || ""}`;
+          image.addEventListener(
+            "error",
+            () => (image.style.visibility = "hidden"),
+          );
           const detail = document.createElement("div");
           const title = document.createElement("strong");
           title.textContent = data.label || "Retakan";
@@ -455,9 +486,10 @@
           confidence.textContent = `Confidence: ${Math.round((Number(data.confidence) || 0) * 100)}%`;
           const timestamp = document.createElement("span");
           const date = data.timestamp ? new Date(data.timestamp) : null;
-          timestamp.textContent = date && !Number.isNaN(date.valueOf())
-            ? date.toLocaleString("id-ID")
-            : "Waktu tidak tersedia";
+          timestamp.textContent =
+            date && !Number.isNaN(date.valueOf())
+              ? date.toLocaleString("id-ID")
+              : "Waktu tidak tersedia";
           detail.append(title, confidence, timestamp);
           card.append(image, detail);
           list.append(card);
@@ -465,11 +497,12 @@
       }
       async function refresh() {
         try {
-          const [healthResponse, statsResponse, documentsResponse] = await Promise.all([
-            fetch("/health"),
-            fetch("/stats"),
-            fetch("/documents?limit=20"),
-          ]);
+          const [healthResponse, statsResponse, documentsResponse] =
+            await Promise.all([
+              fetch("/health"),
+              fetch("/stats"),
+              fetch("/documents?limit=20"),
+            ]);
           const health = await healthResponse.json(),
             stats = await statsResponse.json(),
             documents = await documentsResponse.json();
@@ -487,7 +520,11 @@
           document.querySelector("#database-state").textContent =
             health.database_status || "-";
           renderDetections(Array.isArray(documents) ? documents : []);
-          logs.textContent = JSON.stringify({ health, stats, documents }, null, 2);
+          logs.textContent = JSON.stringify(
+            { health, stats, documents },
+            null,
+            2,
+          );
           setConnection(
             health.ok
               ? "Server terhubung"
