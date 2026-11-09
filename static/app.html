@@ -131,7 +131,8 @@
           monospace;
         letter-spacing: 0.11em;
       }
-      #stream {
+      #stream,
+      #camera-input {
         display: block;
         width: 100%;
         min-height: 360px;
@@ -139,6 +140,9 @@
         object-fit: contain;
         background: #17352e;
       }
+      #camera-input { position: absolute; inset: 0; z-index: 0; }
+      #stream { position: relative; z-index: 1; }
+      #stream.camera-overlay { opacity: 0.72; }
       .stream-note {
         position: absolute;
         inset: auto 14px 14px;
@@ -366,6 +370,7 @@
             <span class="caption" id="source-label">memuat sumber</span>
           </div>
           <div class="video-frame">
+            <video id="camera-input" autoplay playsinline hidden></video>
             <img
               id="stream"
               alt="Stream video dengan area retakan terdeteksi"
@@ -373,7 +378,6 @@
               >Pilih video atau kamera untuk memulai.</span
             >
           </div>
-          <video id="camera-input" autoplay playsinline hidden></video>
           <canvas id="camera-canvas" hidden></canvas>
           <section class="source-controls" aria-label="Sumber input">
             <form class="control-row" id="upload-form">
@@ -572,7 +576,7 @@
         stream.src = `video?reconnect=${Date.now()}`;
         refresh();
       });
-      let cameraStream = null, cameraTimer = null, activeJob = null, jobTimer = null;
+      let cameraStream = null, cameraTimer = null, cameraSending = false, activeJob = null, jobTimer = null;
       const cameraInput = document.querySelector("#camera-input"), cameraCanvas = document.querySelector("#camera-canvas"), cameraSelect = document.querySelector("#camera-select");
       async function listCameras() {
         const devices = await navigator.mediaDevices.enumerateDevices();
@@ -584,33 +588,42 @@
         });
       }
       async function sendCameraFrame() {
-        if (!cameraStream || cameraInput.videoWidth < 2) return;
-        cameraCanvas.width = cameraInput.videoWidth; cameraCanvas.height = cameraInput.videoHeight;
-        cameraCanvas.getContext("2d").drawImage(cameraInput, 0, 0);
-        const blob = await new Promise((resolve) => cameraCanvas.toBlob(resolve, "image/jpeg", .75));
-        if (!blob) return;
-        const data = new FormData(); data.append("frame", blob, "camera.jpg");
+        if (!cameraStream || cameraInput.videoWidth < 2 || cameraSending) return;
+        cameraSending = true;
         try {
+          const width = Math.min(cameraInput.videoWidth, 640);
+          const height = Math.max(1, Math.round(cameraInput.videoHeight * width / cameraInput.videoWidth));
+          cameraCanvas.width = width; cameraCanvas.height = height;
+          cameraCanvas.getContext("2d").drawImage(cameraInput, 0, 0, width, height);
+          const blob = await new Promise((resolve) => cameraCanvas.toBlob(resolve, "image/jpeg", .72));
+          if (!blob) return;
+          const data = new FormData(); data.append("frame", blob, "camera.jpg");
           const response = await fetch("api/camera/frame", { method: "POST", body: data });
           if (!response.ok) throw new Error("server menolak frame");
           const result = await response.json();
           stream.src = `data:image/jpeg;base64,${result.image}`;
+          stream.classList.add("camera-overlay");
           document.querySelector("#camera-state").textContent = `${result.detections.length} deteksi pada frame terakhir`;
         } catch (error) { document.querySelector("#camera-state").textContent = `Kamera gagal diproses: ${error.message}`; }
+        finally {
+          cameraSending = false;
+          if (cameraStream) cameraTimer = setTimeout(sendCameraFrame, 0);
+        }
       }
       document.querySelector("#start-camera").addEventListener("click", async () => {
         try {
           if (!navigator.mediaDevices?.getUserMedia) throw new Error("browser membutuhkan HTTPS untuk kamera");
           if (cameraStream) cameraStream.getTracks().forEach((track) => track.stop());
-          cameraStream = await navigator.mediaDevices.getUserMedia({ video: { deviceId: cameraSelect.value ? { exact: cameraSelect.value } : undefined, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
+          cameraStream = await navigator.mediaDevices.getUserMedia({ video: { deviceId: cameraSelect.value ? { exact: cameraSelect.value } : undefined, width: { ideal: 640 }, height: { ideal: 360 } }, audio: false });
           cameraInput.srcObject = cameraStream; await cameraInput.play(); await listCameras();
-          clearInterval(cameraTimer); cameraTimer = setInterval(sendCameraFrame, 1400); sendCameraFrame();
-          document.querySelector("#camera-state").textContent = "Kamera aktif; frame dikirim bertahap ke server.";
+          cameraInput.hidden = false; stream.removeAttribute("src"); stream.classList.remove("camera-overlay");
+          clearTimeout(cameraTimer); sendCameraFrame();
+          document.querySelector("#camera-state").textContent = "Kamera live aktif; server selalu memproses frame terbaru tanpa antrean.";
         } catch (error) { document.querySelector("#camera-state").textContent = `Kamera tidak dapat diakses: ${error.message}`; }
       });
       document.querySelector("#stop-camera").addEventListener("click", () => {
-        clearInterval(cameraTimer); cameraTimer = null;
-        if (cameraStream) cameraStream.getTracks().forEach((track) => track.stop()); cameraStream = null;
+        clearTimeout(cameraTimer); cameraTimer = null;
+        if (cameraStream) cameraStream.getTracks().forEach((track) => track.stop()); cameraStream = null; cameraInput.hidden = true; stream.classList.remove("camera-overlay");
         document.querySelector("#camera-state").textContent = "Kamera dihentikan.";
       });
       document.querySelector("#upload-form").addEventListener("submit", async (event) => {
